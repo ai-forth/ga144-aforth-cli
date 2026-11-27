@@ -105,6 +105,12 @@
     (fill-rest-with-nops) ;;make sure last instruction is full
     (set-current-node-length))
 
+  ;; `start-new-node` saves this state when switching nodes.  Preserve the
+  ;; final node's address cells as well, so later word shifts can update every
+  ;; forward call/jump reference.
+  (when current-node
+    (set-node-address-cells! current-node address-cells))
+
   (when DEBUG? (display-compiled (compiled used-nodes)))
 
   ;; errors from this point on are not associated with line numbers
@@ -922,7 +928,10 @@ form \"<n> for ... unext\" may be written. The micronext opcode may be compiled
 into any of the four slots."
  (lambda ()
    (compile-instruction! "unext")
-   (pop stack)))
+   ;; `unext` is also a valid standalone opcode.  Only consume a compiler
+   ;; loop handle when one exists (as in `<n> for ... unext`).
+   (when (pair? stack)
+     (pop stack))))
 
 (add-directive!
  "*next"

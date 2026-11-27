@@ -168,7 +168,11 @@
       (if (or (eof-object? tok)
               done)
           (begin
-            (forth-read tok)
+            ;; A node token belongs to the outer parser, but EOF must not be
+            ;; pushed back: the shared reader would leak it into the next
+            ;; compilation (notably after an `include`).
+            (unless (eof-object? tok)
+              (forth-read tok))
             (when (not (null? current-word))
               (when (= (length current-word) 0) (syntax-error "empty node body."))
               (set! words (cons (reverse current-word) words))))
