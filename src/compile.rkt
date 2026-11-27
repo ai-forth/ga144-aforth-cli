@@ -19,6 +19,9 @@
 (define 64-word-mem true)
 (define ignore-overwrite false) ;;used to keep going when some nodes overflow
 (define DEBUG? false)
+;; The Racket compiler uses arrayForth syntax by default. Bowman syntax is
+;; retained only for the compatibility paths below.
+(define bowman-format false)
 
 (define nodes false) ;;node# -> code struct
 (define used-nodes '())
@@ -358,6 +361,24 @@
   (define tok (read-tok))
   (and tok (token-tok tok)))
 
+(define (include-file! filename)
+  (define path
+    (cond [(file-exists? filename) filename]
+          [(file-exists? (build-path "lib" filename))
+           (build-path "lib" filename)]
+          [else (err (rkt-format "include file not found: ~a" filename))]))
+  (define included-words
+    (call-with-input-file path
+      (lambda (in)
+        (parameterize ([current-input-port in])
+          (apply append (parse-words))))))
+  (set! current-token-list (append included-words current-token-list)))
+
+(add-directive!
+ "include"
+ "Include and compile an aForth source file."
+ (lambda () (include-file! (read-tok-name))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 (define current-token false)
 
@@ -384,24 +405,25 @@
   (when DEBUG? (printf "get-word(~a, ~a)\n" n verify-unused))
   (when (or (< n 0)
             (> n num-words))
-    (err (format "invalid memory index: %s" n)))
-  (if save-buffer-mappings
-      ;; (and save-buffer-mappings
-      ;;      (null? (vector-ref buffer-mappings n)))
-      (vector-set! buffer-mappings n (make-vector 4 false)))
+    (err (format "invalid memory index: ~a" n)))
+  (when save-buffer-mappings
+    ;; (and save-buffer-mappings
+    ;;      (null? (vector-ref buffer-mappings n)))
+    (vector-set! buffer-mappings n (make-vector 4 false)))
   ;; ignore overwrite by always fetching a new word
   ;; sometimees, like when resolving backreferences, no-overwrite is used to
   ;; signal that the word must not be overwritten
   (let ((word (if (and ignore-overwrite (not no-overwrite)) false (vector-ref memory n))))
-    (if (null? word)
-        (progn
+    (if (not word)
+        (begin
           (setq word (make-vector 4 false))
           (vector-set! memory n word)
           word)
-      (when (and verify-unused
-                 (not (equal? word (vector false false false false))))
-        (err (format "overwriting word %s at address %s (node overflow?)" word n)))
-      word)))
+        (begin
+          (when (and verify-unused
+                     (not (equal? word (vector false false false false))))
+            (err (format "overwriting word ~a at address ~a (node overflow?)" word n)))
+          word))))
 
 (define (org n)
   (when DEBUG? (printf "        org(~a)\n" n))
@@ -424,7 +446,7 @@
   (when DEBUG? (printf "        add-to-next-slot(~a)\n" inst))
   (unless current-word (err "You probably forgot to use 'node' first"))
   (unless (vector? current-word)
-    (err (format "'current-word' is not a vector: %s" current-word)))
+    (err (format "'current-word' is not a vector: ~a" current-word)))
   (vector-set! current-word current-slot inst)
   (when (instruction? inst)
     (set! last-instruction-word current-word-i)
@@ -582,6 +604,7 @@
   (define addr false)
   (define call-inst false)
   (define new-word-index false)
+  (define len false)
   (define (count word)
     (define n 0)
     (for ((inst word))
@@ -607,7 +630,7 @@
                              (begin
                               (assert (not finish))
                               (set! again true)
-                              (define len (node-len node))
+                              (set! len (node-len node))
                               (when (= len 64)
                                 (err (rkt-format "out of memory while shifting words down node ~a"
                                                  (node-coord node))))
@@ -679,9 +702,9 @@
 (define (address-fits? destination-addr jump-slot (P false))
   ;; returns t if DESTINATION-ADDR is reachable from the current word
   ;; JUMP-SLOT is the slot of the jump/call instruction
-  (assert (not (null destination-addr)))
-  (if (consp destination-addr)
-      (setq destination-addr (car destination-addr)))
+  (assert (not (null? destination-addr)))
+  (when (consp destination-addr)
+    (setq destination-addr (car destination-addr)))
   (set! P (or P next-addr))
   (and jump-slot
        (>= jump-slot 0)
@@ -752,7 +775,7 @@
 
 (define (set-current-node-length)
   (let ((i (- (vector-length memory) 1))
-        (empty-word [nil nil nil nil]))
+        (empty-word (vector nil nil nil nil)))
     (while (and (>= i 0)
                 (or (not (vector-ref memory i))
                     (equal? (vector-ref memory i) empty-word)))
@@ -845,7 +868,7 @@ case you may write 'push <other things> begin'"
 (define (compile-next-type inst)
   (let ((addr (pop stack))
         (next false))
-    (when (null addr)
+    (when (null? addr)
       (err "address from stack is nil"))
     (unless (consp addr)
       (err (rkt-format "expected type cons from stack, got ~a ~a"  (type-of addr) addr)))
@@ -911,6 +934,7 @@ into any of the four slots."
 (define (compile-transfer-instruction inst name (addr false))
   ;; inst - instruction type
   ;; name - name of word to jump to
+  (define cell false)
   (set! addr (or addr (get-word-address name)))
   (if addr
       (begin
@@ -945,10 +969,10 @@ into any of the four slots."
 
   (if immediate
       (compile-transfer-instruction inst (read-tok-name))
-    (begin
-     (add-to-next-slot inst)
-     (push (cons (make-addr current-addr) next-addr) stack))
-    (goto-next-word)))
+      (begin
+        (add-to-next-slot inst)
+        (push (cons (make-addr current-addr) next-addr) stack)
+        (goto-next-word))))
 
 ;;If T is nonzero, program flow continues; otherwise jumps to matching 'then'
 (define (if-directive)
@@ -1243,12 +1267,13 @@ effect as though a program had executed code 30 20 10"
 
 (define (get-word-address* word)
   (define addr (get-word-address word))
+  (define cell false)
   (if addr
       addr
-    (begin
-     (define cell (make-new-address-cell false word))
-     (add-to-waiting name cell)
-     cell)))
+      (begin
+        (set! cell (make-new-address-cell false word))
+        (add-to-waiting word cell)
+        cell)))
 
 (add-directive!
  "'"
@@ -1271,7 +1296,7 @@ effect as though a program had executed code 30 20 10"
     dir)))
 
 (define (define-named-addresses!)
-  (for ((addr (if (or bowman-format true)
+  (for ((addr (if bowman-format
                   (append named-addresses io-places)
                   named-addresses)))
     (add-directive!
@@ -1325,13 +1350,13 @@ effect as though a program had executed code 30 20 10"
   (check-stack stack 1)
   (push (op (pop stack)) stack))
 
-(def-compiler-op! "+" (lambda () (_compiler-binop '+)))
-(def-compiler-op! "sub" (lambda () (_compiler-binop '-)))
-(def-compiler-op! "*" (lambda () (_compiler-binop '*)))
-(def-compiler-op! "/" (lambda () (_compiler-binop '/)))
-(def-compiler-op! "or" (lambda () (_compiler-binop 'bitwise-xor)))
-(def-compiler-op! "ior" (lambda () (_compiler-binop 'bitwise-ior)))
-(def-compiler-op! "-" (lambda () (_compiler-unop 'bitwise-not)))
+(def-compiler-op! "+" (lambda () (_compiler-binop +)))
+(def-compiler-op! "sub" (lambda () (_compiler-binop -)))
+(def-compiler-op! "*" (lambda () (_compiler-binop *)))
+(def-compiler-op! "/" (lambda () (_compiler-binop /)))
+(def-compiler-op! "or" (lambda () (_compiler-binop bitwise-xor)))
+(def-compiler-op! "ior" (lambda () (_compiler-binop bitwise-ior)))
+(def-compiler-op! "-" (lambda () (_compiler-unop bitwise-not)))
 
 (def-compiler-op!
   "dup"

@@ -25,10 +25,10 @@
   `(let [(__v__ ,val)]
      (set! ,var __v__) __v__))
 
-(defmacro while (condition code)
+(defmacro while (condition . body)
   `(letrec ((fn (lambda ()
                   (when ,condition
-                    ,code
+                    ,@body
                     (fn)))))
      (fn)))
 
@@ -68,6 +68,20 @@
 (define (_def syms) 0)
 
 (define make-set set)
+(define consp pair?)
+(define 1+ add1)
+(define 1- sub1)
+(define % modulo)
+(define (type-of value)
+  (cond [(pair? value) 'cons]
+        [(null? value) 'null]
+        [(boolean? value) 'boolean]
+        [(number? value) 'number]
+        [(string? value) 'string]
+        [(vector? value) 'vector]
+        [else 'unknown]))
+(define (replace-regexp-in-string pattern replacement string)
+  (regexp-replace* (regexp pattern) string replacement))
 
 ;;;;;;;;;;;
 ;;; need to define these to something for the compiler. these functions are not called when code is executed as racket
@@ -76,7 +90,7 @@
 (define aforth-token-end true)
 (define aforth-token-type true)
 (define subseq true)
-(define (funcall fn) (fn))
+(define (funcall fn . args) (apply fn args))
 (define (funcall1 fn a) (fn a))
 (define (funcall2 fn a b) (fn a b))
 (define require true)
@@ -90,7 +104,9 @@
 (define error-data-p true)
 (define throw true)
 (define aforth-error-message true)
-(define most-positive-fixnum false)
+;; Racket does not expose Emacs Lisp's `most-positive-fixnum`; an infinite
+;; sentinel preserves the overflow guard without constraining Racket integers.
+(define most-positive-fixnum +inf.0)
 (define princ false)
 
 (define rkt-format format)

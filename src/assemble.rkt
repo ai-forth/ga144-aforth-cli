@@ -66,7 +66,7 @@
 (define (get-compiled-size mem)
   (let ((meml (reverse (vector->list mem)))
         (i 0))
-    (while (and (not (null meml))
+    (while (and (not (null? meml))
                 (or (not (car meml))
                     (equal? (car meml) (vector false false false false))))
       (begin (set! i (add1 i))

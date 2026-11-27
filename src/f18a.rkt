@@ -1,5 +1,12 @@
 #lang racket ;; -*- lexical-binding: t -*-
 
+(require "common.rkt"
+         "disassemble.rkt"
+         "stack.rkt"
+         "el.rkt")
+
+(provide (all-defined-out))
+
 (define save-history false)
 (define count-instructions true)
 (define activity-history-length 10)
@@ -13,6 +20,7 @@
 (define obj-key-counter 0)
 
 (define ga-show-source-position false)
+(define ga-extern-functions (make-hash))
 
 (define (register-obj obj)
   ;; used to register a ga144 object and returns a key that can be used to access it
@@ -638,7 +646,10 @@
           (let ((x (vector-ref memory addr)))
             (if (vector? x)
                 (funcall (vector-ref x 0))
-                (err (rkt-format "read-memory(~a) - invalid port\n" addr))))
+                ;; Unconnected edge ports do not provide data.  Suspend this
+                ;; core until a peer can satisfy a port read.
+                (begin (suspend (rkt-format "invalid port ~a" addr))
+                       false)))
           (begin (set! fetched-data (vector-ref memory (region-index addr)))
                  true)))
 
@@ -694,7 +705,7 @@
 
     (define (finish-I-fetch)
       (set! I fetched-data)
-      (when (null I)
+      (when (null? I)
         (log "Error: invalid null value for fetched data\n")
         (set! I 0))
       (if (and ga-show-source-position
@@ -769,7 +780,7 @@
 
       (when extern-word-functions
         (mapc (lambda (fn)
-                (funcall (gethash fn ga-extern-functions 'identity) this))
+                (funcall (hash-ref ga-extern-functions fn identity) this))
               (vector-ref extern-word-functions _i)))
 
       ;; Fetch next word if index is zero and we are not in a unext loop
@@ -1034,14 +1045,13 @@
 
     (define/public (suspended?) suspended)
     (define/public (set-map-node node buffer)
-      (printf "set-map-node: ~a ~a" (ga-node-coord node) coord)
+      (printf "set-map-node: ~a ~a" (send node get-coord) coord)
       (set! map-node node)
       (set! map-buffer buffer))
 
     (define (update-display-color color)
-      ;; if color is false, clear the display
-      (with-current-buffer map-buffer
-        (ga-set-usage-color coord color)))
+      ;; Map-buffer rendering is provided by the Emacs frontend only.
+      (void))
 
     (define/public (update-map-display global-steps)
       ;; only called when map-node is non-nil
@@ -1065,8 +1075,8 @@
         (let* ((gsteps (max step-counter_ global-steps))
                (n (floor (* (/ step-counter_ (if (= gsteps 0)
                                                 1.0 (* gsteps 1.0))) 255)))
-               (s (to-hex-str (- 255 n)))
-               (c (format "#ff%s%s" s s)))
+               (s (number->string (- 255 n) 16))
+               (c (format "#ff~a~a" s s)))
           ;;(printf "[~a] ~a ~a ~a\n" coord c n s)
           (update-display-color c)
           )))
@@ -1093,7 +1103,7 @@
       (set! A (or (node-a node) A))
       (set! B (or (node-b node) B))
       (set! IO (or (node-io node) IO))
-      (for ((v (node-stack node)))
+      (for ((v (or (node-stack node) '())))
         (d-push! v))
       (let ((funcs (node-extern-funcs node)))
         (when funcs
@@ -1410,20 +1420,20 @@
         (vector-set! ludr-port-nodes (convert "north")
                      (if (< coord 700)
                          north
-                         (new f18a% 145 (get-ga144))))
+                         (new f18a% [index 145] [ga144 (get-ga144)])))
 
         (vector-set! ludr-port-nodes (convert "east")
                      (if (< (modulo coord 100) 17)
                          east
-                         (new f18a% 145 (get-ga144))))
+                         (new f18a% [index 145] [ga144 (get-ga144)])))
         (vector-set! ludr-port-nodes (convert "south")
                      (if (> coord 17)
                          south
-                         (new f18a% 145 (get-ga144))))
+                         (new f18a% [index 145] [ga144 (get-ga144)])))
         (vector-set! ludr-port-nodes (convert "west")
                      (if (> (modulo coord 100) 0)
                          west
-                         (new f18a% 145 (get-ga144))))))
+                         (new f18a% [index 145] [ga144 (get-ga144)])))))
 
     ;;(define/public (get-ludr-port-nodes) ludr-port-nodes) ;; update -- ludr-port-nodes does not contain the nodes any more
 
@@ -1465,7 +1475,7 @@
           ;; On next step the simulation resumes where it left off but
           ;; the breakpoint must not trigger.
           (set! break-count (1+ break-count))
-          (if (eq (% break-count 2) 0) ;;trigger breakpoint on every other call
+          (if (= (% break-count 2) 0) ;;trigger breakpoint on every other call
               (begin (break name)
                      false)
               true)))
@@ -1543,7 +1553,7 @@
         (while (not (or (eq? v 'end)
                         (>= i n)))
           (begin (set! v (vector-ref memory i))
-                 (printf (if (numberp v) "~x " "%s") v)
+                 (printf (if (number? v) "~x " "~a") v)
                  (set! i (add1 i))))
         (printf "\n")))
 
@@ -1768,24 +1778,6 @@
 
     (define _last-instruction-buffer false)
     (define (ga-update-buffer-overlay position)
-      (if position
-        (let* ((file (car position))
-               (buf (and file (find-buffer-visiting file))))
-          (when file
-            (unless buf
-              (set! buf (find-file-other-window file)))
-            (set! _last-instruction-buffer buf)
-            (with-current-buffer buf
-              (unless buffer-inst-overlay
-                (set! buffer-inst-overlay (make-overlay 0 0 buf)))
-              (move-overlay buffer-inst-overlay (cadr position) (caddr position))
-              (overlay-put buffer-inst-overlay 'face (list :background "#ff0000"))
-              )))
-
-        ;;if position is null, change the color of the overlay to yellow to indicate
-        ;;that the current position is lost, but this is the last known location
-        (when (and buffer-inst-overlay _last-instruction-buffer)
-          (overlay-put buffer-inst-overlay 'face (list :background "#ffff00")))
-        )
-      )
+      ;; Source-buffer overlays belong to the Emacs frontend.
+      (void))
     ))

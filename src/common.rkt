@@ -211,7 +211,7 @@
 ;; 'nodes': list of 'node' structs
 ;; 'error-info': struct error-info
 
-(struct symbol (val address line col))
+(struct symbol (val address line col) #:mutable)
 
 (struct token (tok line col))
 
@@ -226,7 +226,7 @@
 (define default-bootstream-type "async")
 
 (define (create-node coord (mem false) (buffer-map false) (len 0) (buffer false))
-  (let ((new (node coord mem buffer-map len buffer)))
+  (let ((new (node coord mem buffer-map len)))
     (set-node-symbols! new (list))
     (set-node-word-dict! new (make-hash))
     (set-node-address-cells! new (make-set))

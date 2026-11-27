@@ -1,5 +1,11 @@
 #lang racket ;; -*- lexical-binding: t -*-
 
+(require "common.rkt"
+         "f18a.rkt"
+         "el.rkt")
+
+(provide (all-defined-out))
+
 (define _PORT-DEBUG? false)
 (define DISPLAY_STATE? false)
 (define port-debug-list '(1 2))
@@ -10,7 +16,7 @@
   (set! ga-run-sim nil))
 
 (define (make-ga144 name_ (interactive_ false) (source-buffer_ false))
-  (new ga144% name_ interactive_ source-buffer_))
+  (new ga144% [name name_] [interactive interactive_] [source-buffer source-buffer_]))
 
 (define ga144%
   (class object%
@@ -31,7 +37,7 @@
     ;;builds matrix of 144 f18 nodes
     (define (build-node-matrix)
       (for ((i 144))
-        (vector-set! nodes i (new f18a% i this source-buffer)))
+        (vector-set! nodes i (new f18a% [index i] [ga144 this] [source-buffer source-buffer])))
       (vector-map (lambda (node) (send node init)) nodes))
 
     (define (index->node index)
@@ -206,7 +212,7 @@
       (vector-map (lambda (node)
                     (send node update-map-display time))
                   nodes)
-      (redisplay))
+      (void))
 
     ;; ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
     ;; state display functions

@@ -16,6 +16,7 @@
          forth-read-no-eof
          forth-read-char
          parse-code
+         parse-words
          display-parsed-code)
 
 (define line-number 1)
@@ -82,6 +83,22 @@
   (unless (equal? (forth-read-char) _char-close-paren)
     (comment)))
 
+(define (inline-comment? tok)
+  (and (string? tok)
+       (>= (string-length tok) 2)
+       (equal? (string-ref tok 0) #\()
+       (equal? (string-ref tok (sub1 (string-length tok))) _char-close-paren)))
+
+(define (line-comment? tok)
+  (and (string? tok)
+       (> (string-length tok) 0)
+       (equal? (string-ref tok 0) #\\)))
+
+(define (skip-line-comment)
+  (define char (forth-read-char))
+  (unless (or (eof-object? char) (equal? char _char-newline))
+    (skip-line-comment)))
+
 (define (parse-code)
     (assert (not elisp?))
   ;;returns list of cons: ((NODE . CODELIST)...))
@@ -95,7 +112,12 @@
   (define (read-loop)
     (define tok-token (forth-read))
     (define tok (token-tok tok-token))
-    (cond ((equal? tok "(")
+    (cond ((line-comment? tok)
+           (skip-line-comment)
+           (read-loop))
+          ((inline-comment? tok)
+           (read-loop))
+          ((equal? tok "(")
            (comment)
            (read-loop))
           ((equal? tok "node")
@@ -166,6 +188,9 @@
                    (when (or (not name) (eof-object? (token-tok name)))
                      (syntax-error "expected word name following ':'"))
                    (set! current-word (list name token)))
+                  ((line-comment? tok)
+                   (skip-line-comment))
+                  ((inline-comment? tok))
                   ((equal? tok "(")
                    (comment))
                   ((equal? tok "node")

@@ -104,7 +104,7 @@
   (define total 0)
   (define (percent a b)
     (exact->inexact (* (/ (* a 1.0) b) 100)))
-  (for ((n (compiled-nodes compiled) hex?))
+  (for ((n (compiled-nodes compiled)))
     (printf "~a  ~a~a ~a%\n"
             (node-coord n)
             (node-len n)
@@ -223,6 +223,8 @@
     (define mem (node-mem node))
     (define len (node-len node))
     (define word false)
+    (define name false)
+    (define comment false)
     (printf (format "\n\n---------------------------- %03d ----------------------------\n"
                     coord))
     (when (and full (not aforth-sim))
@@ -289,7 +291,7 @@
                   (if name
                       ;; convert names like ---l to their address
                       (begin (set! a (get-addr* name))
-                             (set! comment (and a (format "  \\ %s" name)))
+                             (set! comment (and a (format "  \\ ~a" name)))
                              (set! name (or a name)))
                       (set! name a))
                   (printf "~a" name)
