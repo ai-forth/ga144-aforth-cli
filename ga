@@ -1,0 +1,2 @@
+#!/bin/sh
+exec racket "$(dirname "$0")/src/ga-cli.rkt" "$@"
