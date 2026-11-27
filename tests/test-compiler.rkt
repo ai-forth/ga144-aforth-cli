@@ -272,4 +272,7 @@
 
 (unless elisp?
   (printf "running compiler checks...\n")
-  (printf "~a\n" (if (run-compiler-tests) "ok" "failed")))
+  (define result (run-compiler-tests))
+  (printf "~a\n" (if result "ok" "failed"))
+  (unless result
+    (exit 1)))
